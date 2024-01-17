@@ -1,0 +1,208 @@
+export Trajectory, trajectory,
+       kspaceNodes, echoTime, acqTimePerProfile, readoutTimes,
+       numSamplingPerProfile, numProfiles, numSlices, samplingFreq,
+       scale, isCartesian, isCircular
+
+import Base: string
+
+"""
+struct describing a trajectory
+
+# Fields
+* `name::String`                  - name of the trajectory
+* `nodes::Matrix{Float64}`        - sampling locations in k-space.
+                                    (1.dim <-> dimensions of k-space, 2. dim <-> sampling points)
+* `times::Vector{Float64}`        - sampling times in s
+* `TE::Float64`                   - echo time in s
+* `AQ::Float64``                  - readout duration in s (per profile)
+* `numProfiles::Int64`            - number of profiles
+* `numSamplingPerProfile::Int64`  - number of sampling points per profile
+* `numSlices::Int64`              - number of slices (for 3d trajectories)
+* `cartesian::Bool`               - true if sampling points lie on a cartesian grid
+* `circular::Bool`                - true if kspace is covered in a circular domain
+"""
+mutable struct Trajectory{T}
+  name::String
+  nodes::Matrix{T}
+  times::Vector{T}
+  TE::T
+  AQ::T
+  numProfiles::Int64
+  numSamplingPerProfile::Int64
+  numSlices::Int64
+  cartesian::Bool
+  circular::Bool
+end
+
+function Trajectory(nodes::AbstractMatrix{T}, numProfiles::Int64, numSamplingPerProfile;
+                    times=nothing, TE=0.0, AQ=1.e-3, numSlices::Int64=1,
+                    cartesian::Bool=false, circular::Bool=false) where T <: AbstractFloat
+
+  TE_ = T(TE)
+  AQ_ = T(AQ)
+
+  if times != nothing
+    ttimes = times
+  else
+    ttimes = readoutTimes(T,numProfiles,numSamplingPerProfile, numSlices; TE=TE_, AQ=AQ_)
+  end
+  
+  return Trajectory("Custom", nodes, ttimes, TE_, AQ_, numProfiles, numSamplingPerProfile, numSlices, cartesian, circular)
+end
+
+Base.vec(tr::Trajectory) = [tr]
+Base.vec(tr::Vector{Trajectory}) = tr
+Base.size(tr::Trajectory) = size(kspaceNodes(tr))
+Base.size(tr::Trajectory,i::Int) = size(kspaceNodes(tr),i)
+function scale(tr::Trajectory, factor::Real)
+  trC = deepcopy(tr)
+  trC.nodes ./= factor
+  return trC
+end
+
+include("2D/Cartesian2D.jl")
+include("2D/Radial2D.jl")
+include("2D/Spiral2D.jl")
+include("2D/OneLine2D.jl")
+include("2D/Spiral2DVariableDens.jl")
+include("2D/Spiral2DDualDens.jl")
+include("2D/Spiral2DPerturbed.jl")
+include("2D/EPI.jl")
+
+include("3D/Kooshball.jl")
+include("3D/Cartesian3D.jl")
+include("3D/StackofStars.jl")
+
+#### Factory method ###
+
+# This dispatches on the file extension and automatically
+# generates the correct type
+"""
+    trajectory(trajName::AbstractString, numProfiles::Int, numSamplingPerProfile::Int; numSlices::Int64=1, TE::Float64=0.0, AQ::Float64=1.e-3, kargs...)
+
+is a factory method to construct a trajectory from its `name`
+
+# Arguments
+* `name::String`                  - name of the trajectory
+* `numProfiles::Int64`            - number of profiles
+* `numSamplingPerProfile::Int64`  - number of sampling points per profile
+* (`numSlices::Int64=1`)          - number of slices (for 3d trajectories)
+* (`TE::Float64=0.0`)             - echo time in s
+* (`AQ::Float64=1.e-3`)           - readout duration in s (per profile)
+* `kargs...`                      - addional keyword arguments
+"""
+function trajectory(::Type{T}, trajName::AbstractString, numProfiles::Int, numSamplingPerProfile::Int; numSlices::Int64=1, 
+         TE::AbstractFloat=0.0, AQ::AbstractFloat=1.e-3, kargs...) where T
+
+  TE_ = T(TE)
+  AQ_ = T(AQ)
+
+  if trajName == "Spiral"
+    tr = SpiralTrajectory(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+  elseif trajName == "Radial"
+    tr = RadialTrajectory(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+  elseif trajName == "Cartesian"
+    tr = CartesianTrajectory(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+  elseif trajName == "EPI"
+    tr = EPITrajectory(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+  elseif trajName == "OneLine"
+    tr = OneLine2dTrajectory(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+  elseif trajName == "SpiralVarDens"
+    tr = SpiralTrajectoryVarDens(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+elseif trajName == "SpiralPerturbed"
+    tr = SpiralPerturbedTrajectory(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+  elseif trajName == "SpiralDualDens"
+    tr = SpiralTrajectoryDualDens(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+  elseif trajName == "Cartesian3D"
+    tr = CartesianTrajectory3D(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, numSlices=numSlices, kargs...)
+  elseif trajName == "StackOfStars"
+    tr = StackOfStarsTrajectory(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, numSlices=numSlices, kargs...)
+  elseif trajName == "Kooshball"
+    tr = KooshballTrajectory(T, numProfiles, numSamplingPerProfile; TE=TE_, AQ=AQ_, kargs...)
+  else
+    @error "The trajectory $trajName is not yet supported!"
+  end
+
+  # return Trajectory(trajName, nodes, TE, AQ, numProfiles, numSamplingPerProfile, numSlices, false, true)
+  return tr
+end
+
+
+## some general methods that might be overloaded by the real implementations
+""" `string(tr::Trajectory)` returns the name of a trajectory """
+string(tr::Trajectory) = tr.name
+
+""" `echoTime(tr::Trajectory)` returns the echo time of a trajectory """
+echoTime(tr::Trajectory) = tr.TE
+
+""" `acqTimePerProfile(tr::Trajectory)` returns the acquisition time per profile of a trajectory """
+acqTimePerProfile(tr::Trajectory) = tr.AQ
+
+""" `string(tr::Trajectory)` returns the name of a trajectory """
+numProfiles(tr::Trajectory) = tr.numProfiles
+
+""" `numSamplingPerProfile(tr::Trajectory)` returns the number of samples per profile of a trajectory """
+numSamplingPerProfile(tr::Trajectory) = tr.numSamplingPerProfile
+
+""" `numSlices(tr::Trajectory)` returns the number of slices of a trajectory """
+numSlices(tr::Trajectory) = tr.numSlices
+
+""" `isCircular(tr::Trajectory)` returns whether the trajectory has circular k-space coverage """
+isCircular(tr::Trajectory) = tr.circular
+
+""" `isCartesian(tr::Trajectory)` returns whether the trajectory nodes lie on a cartesian grid"""
+isCartesian(tr::Trajectory) = tr.cartesian
+
+# 2d or 3d encoding
+""" `dims(tr::Trajectory)` returns the number of dimensions of a trajectory """
+Base.ndims(tr::Trajectory) = size(tr.nodes,1)
+
+""" `kspaceNodes(tr::Trajectory)` returns the kspace sampling points of a trajectory """
+kspaceNodes(tr::Trajectory) = tr.nodes
+
+""" `readoutTimes(tr::Trajectory)` returns the readoutTimes for the sampling points of a trajectory """
+readoutTimes(tr::Trajectory) = tr.times
+
+""" `profileNodes(tr::Trajectory,prof::Int,slice::Int)` returns kspace nodes for a given profile """
+function profileNodes(tr::Trajectory,prof::Int,slice::Int)
+  nodes = reshape(tr.nodes,:,tr.numSamplingPerProfile,tr.numProfiles, tr.numSlices)
+  return nodes[:,:,prof,slice]
+end
+
+function readoutTimes(::Type{T}, numProfiles, numSamplingPerProfile, numSlices=1; TE=0.0, AQ=1.e-3) where T
+  times = zeros(T, numSamplingPerProfile, numProfiles, numSlices)
+  for j = 1:numSlices
+    for l = 1:numProfiles
+      for k = 1:numSamplingPerProfile
+        times[k,l,j] = TE + AQ*(k-1)/numSamplingPerProfile
+      end
+    end
+  end
+  return vec(times)
+end
+
+
+function zax(n::Int64,N::Int64)
+  return (2 .*n - N -1.)/N
+end
+
+function xax(n::Int64,N::Int64)
+  return cos(sqrt(N*pi)*asin(zax(n,N)))*sqrt(1.0-zax(n,N)^2.)
+end
+
+function yax(n::Int64,N::Int64)
+  return sin(sqrt(N*pi)*asin(zax(n,N)))*sqrt(1.0-zax(n,N)^2.)
+end
+
+
+function improvedTrajPlot(tr::Trajectory)
+  numProfiles = numProfiles(tr)
+  numSamplePerProfile = numSamplingPerProfile(tr)
+  nodes = kspaceNodes(tr)
+  figure()
+  for i=1:numProfiles
+     indices = 1 + (i-1)*numSamplePerProfile : i*numSamplePerProfile
+     plot(nodes[1,indices],nodes[2,indices],color="blue" )
+     plot(nodes[1,indices],nodes[2,indices],".",color="red", )
+  end
+end
