@@ -10,10 +10,6 @@ function prod_smap!(y::AbstractVector{T}, smaps::AbstractMatrix{T}, x::AbstractV
     y_[i] = x_[i[1],i[2]] * smaps[i[1],i[3]]
   end
 
-  @info("stop...")
-  @infiltrate
-
-
   return y
 end
 
@@ -27,9 +23,6 @@ function ctprod_smap!(y::AbstractVector{T}, smapsC::AbstractMatrix{T}, x::Abstra
   @inbounds for i ∈ CartesianIndices(x_)
     y_[i[1],i[2]] += x_[i] * smapsC[i[1],i[3]]
   end
-
-  @info("stop...")
-  @infiltrate
 
   return y
 end
