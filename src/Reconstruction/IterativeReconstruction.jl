@@ -197,9 +197,6 @@ function reconstruction_multiCoil(acqData::AcquisitionData{T}
 
       EFull = ∘(W, E[j], isWeighting=true)
       EFullᴴEFull = normalOperator(EFull)
-
-      @info("Stop...")
-      @infiltrate
       
       solver = createLinearSolver(solvername, EFull; AᴴA=EFullᴴEFull, reg=reg, params...)
       I = solve(solver, kdata; params...)
@@ -359,9 +356,6 @@ function reconstruction_expandedSignalModel(acqData::AcquisitionData{T}
       solver = createLinearSolver(solvername, EFull; AᴴA=EFullᴴEFull, reg=reg, params...)
 
       I = solve(solver, kdata; params...)
-
-      @info("stop here...")
-      @infiltrate
 
       if isCircular( trajectory(acqData, j) )
         circularShutter!(reshape(I, reconSize), 1.0)
